@@ -69,13 +69,20 @@ class MindbodySpider(scrapy.Spider):
 
     def parse(self, response):
         data = json.loads(response.text)
+
+        if 'data' not in data:
+            self.logger.warning(f"No data returned for {response.meta['city_name']}, page {response.meta['page_num']}")
+            return
+
         gyms_df = pd.json_normalize(data['data'])
 
         # Save the dataframe to a CSV
         city_name = response.meta['city_name']
         state = response.meta['state']
         fname = f'{city_name}_{state}.csv'.replace(' ', '_')
-        csv_path = f'./data/cities2/{fname}'
+        csv_dir = './data/cities2'
+        os.makedirs(csv_dir, exist_ok=True)
+        csv_path = f'{csv_dir}/{fname}'
 
         # Check if file exists to determine the write mode
         # NOTE: You will need to manually create the `./data/cities2/` directory before running
