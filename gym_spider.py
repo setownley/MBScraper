@@ -1,8 +1,7 @@
-import scrapy
 import json
-import pandas as pd
-from scrapy.crawler import CrawlerProcess
 import os
+import scrapy
+import pandas as pd
 
 
 class MindbodySpider(scrapy.Spider):
@@ -14,11 +13,13 @@ class MindbodySpider(scrapy.Spider):
     }
 
     # NOTE: The placeholder for the page number is <<num>>
-    starting_payload = '{' \
-                       '"sort":"-_score,distance",' \
-                       '"page":{"size":50,"number":<<num>>},' \
-                       '"filter":{"categories":"any","latitude":<<lat>>,"longitude":<<lon>>,"categoryTypes":"any"}' \
-                       '}'
+    starting_payload = (
+        '{'
+        '"sort":"-_score,distance",'
+        '"page":{"size":50,"number":<<num>>},'
+        '"filter":{"categories":"any","latitude":<<lat>>,"longitude":<<lon>>,"categoryTypes":"any"}'
+        '}'
+    )
 
 
     headers = {
@@ -42,25 +43,30 @@ class MindbodySpider(scrapy.Spider):
     }
 
     def __init__(self):
-        scrapy.Spider.__init__(self)
+        super().__init__()
         self.city_count = 0
 
-    def start_requests(self):
-        cities = pd.read_csv('uscities.csv')
+    async def start(self):
+        """Generate initial requests using Scrapy's async start hook.
 
-        # Using a slice for testing, remove [16001:16005] to scrape all cities
-        for idx, city in cities[16001:16005].iterrows():
+        The previous implementation relied on ``start_requests`` (deprecated
+        in Scrapy 2.13+) and sliced the city list far beyond the size of the
+        bundled ``uscities.csv`` sample, which resulted in no requests being
+        scheduled. This method uses the new API and iterates over all cities
+        discovered in the CSV so the spider always emits work.
+        """
+
+        cities = self._load_cities()
+
+        for _, city in cities.iterrows():
             lat, lon = city.lat, city.lng
             self.logger.info(f"{city.city}, {city.state_id} started")
 
-            # FIX: Changed '<<pg>>' to '<<num>>'
-            payload = self.starting_payload.replace('<<num>>', '1').replace('<<lat>>', str(lat)).replace('<<lon>>', str(lon))
-
-            print(payload)
+            payload = self._build_payload(page_num=1, lat=lat, lon=lon)
 
             yield scrapy.Request(
                 url="https://prod-mkt-gateway.mindbody.io/v1/search/locations",
-                method="POST", # FIX: Changed to POST
+                method="POST",
                 body=payload,
                 headers=self.headers,
                 meta={'city_name': city.city, 'page_num': 1, 'lat': lat, 'lon': lon, 'state': city.state_id},
@@ -96,13 +102,11 @@ class MindbodySpider(scrapy.Spider):
         if next_page_num <= 5:  # Your upper limit of 5 pages per city
             lat, lon = response.meta['lat'], response.meta['lon']
 
-            # FIX 1: Changed '<<pg>>' to '<<num>>'
-            # FIX 2: Changed '1' to str(next_page_num) to request the next page
-            payload = self.starting_payload.replace('<<num>>', str(next_page_num)).replace('<<lat>>', str(lat)).replace('<<lon>>', str(lon))
+            payload = self._build_payload(page_num=next_page_num, lat=lat, lon=lon)
 
             yield scrapy.Request(
                 url="https://prod-mkt-gateway.mindbody.io/v1/search/locations",
-                method="POST", # FIX: Changed to POST
+                method="POST",
                 body=payload,
                 headers=self.headers,
                 meta={'city_name': response.meta['city_name'], 'page_num': next_page_num, 'lat': lat, 'lon': lon,
@@ -113,4 +117,34 @@ class MindbodySpider(scrapy.Spider):
         self.city_count += 1
         print(response.meta['city_name'], f'complete ({self.city_count})')
         self.logger.info(f"{response.meta['city_name']}, {response.meta['state']} is complete")
+
+    def _load_cities(self) -> pd.DataFrame:
+        """Load city data from ``uscities.csv``.
+
+        Supports both the full dataset format (with ``city``, ``state_id``,
+        ``lat``, ``lng`` columns) and the condensed example format included in
+        this repository that uses ``Column``/``Value`` pairs.
+        """
+
+        cities = pd.read_csv('uscities.csv')
+
+        expected_columns = ['city', 'state_id', 'lat', 'lng']
+        if set(expected_columns).issubset(set(cities.columns)):
+            return cities[expected_columns]
+
+        if {'Column', 'Value'}.issubset(set(cities.columns)):
+            mapped = dict(zip(cities['Column'], cities['Value']))
+            missing = set(expected_columns).difference(mapped)
+            if missing:
+                raise ValueError(f"uscities.csv missing required fields: {sorted(missing)}")
+            return pd.DataFrame([mapped])[expected_columns]
+
+        raise ValueError("uscities.csv must contain city/state_id/lat/lng columns or Column/Value pairs")
+
+    def _build_payload(self, page_num: int, lat: float, lon: float) -> str:
+        """Fill the API payload template with request-specific values."""
+
+        payload = self.starting_payload.replace('<<num>>', str(page_num))
+        payload = payload.replace('<<lat>>', str(lat)).replace('<<lon>>', str(lon))
+        return payload
 
