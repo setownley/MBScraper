@@ -1,0 +1,10 @@
+Column,Value,Description
+city,Sydney,The city name.
+state_id,NSW,The state/region ID (New South Wales).
+lat,-33.8698,The latitude (South is negative).
+lng,151.2083,The longitude (East is positive).
+Column,Value,Description
+city,Sydney,The city name.
+state_id,NSW,The state/region ID (New South Wales).
+lat,-33.8698,The latitude (South is negative).
+lng,151.2083,The longitude (East is positive).
